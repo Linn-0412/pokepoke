@@ -1,4 +1,4 @@
-import { Camera, FileJson, Plus, Trash2 } from 'lucide-react'
+import { Camera, FileJson, Images, Plus, Trash2 } from 'lucide-react'
 import type { Dispatch, SetStateAction } from 'react'
 import { useState } from 'react'
 import { ChipSelector } from '../../components/ChipSelector'
@@ -99,13 +99,30 @@ export function DecksTab({ state, setState }: DecksTabProps) {
         </p>
         <div className="import-actions">
           <label className="file-button">
+            <Images size={18} />
+            <span>写真から選択</span>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0]
+                event.currentTarget.value = ''
+                void handleQrFile(file)
+              }}
+            />
+          </label>
+          <label className="file-button">
             <Camera size={18} />
-            <span>QR画像</span>
+            <span>カメラで撮影</span>
             <input
               type="file"
               accept="image/*"
               capture="environment"
-              onChange={(event) => void handleQrFile(event.target.files?.[0])}
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0]
+                event.currentTarget.value = ''
+                void handleQrFile(file)
+              }}
             />
           </label>
           <button className="icon-button" type="button" onClick={handleTextImport} disabled={isImporting}>
