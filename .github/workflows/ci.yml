@@ -1,0 +1,40 @@
+# main への push でテスト・lint・ビルドを実行し、通ったコミットだけを production ブランチに進める。
+# Cloudflare 側は本番ブランチを production にしておくことで、テストを通ったものだけがデプロイされる。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+  promote:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # fast-forward のみ (production を直接いじって履歴が分かれていたら失敗させる)
+      - run: git push origin "${{ github.sha }}:refs/heads/production"

@@ -21,6 +21,10 @@ npm run build
 npm test
 ```
 
+## デプロイ
+
+Cloudflare は `production` ブランチをデプロイします。`main` に push すると GitHub Actions(`.github/workflows/ci.yml`)で lint・テスト・ビルドを実行し、すべて通ったコミットだけを `production` に進めます。`production` には直接 push しないでください。
+
 ## 使い方
 
 1. `パック` タブでパックを選び、カード画像をタップして「ほしいものリスト」に追加します。
@@ -32,7 +36,7 @@ npm test
 
 `public/card-db.json` に全カード(日本語名・ワザ・収録パック・レアリティ・絵柄違い)と、パックごとのレアリティ別カード枚数・排出率を同梱しています。生成元:
 
-- [GameWith カード一覧](https://gamewith.jp/pokemon-tcg-pocket/462535): 日本語名、ワザ、収録パック、画像
+- 攻略サイトのカード一覧ページ: 日本語名、ワザ、収録パック、画像
 - [flibustier/pokemon-tcg-pocket-database](https://github.com/flibustier/pokemon-tcg-pocket-database): QRのカードID、弾ごとの排出率(レアパック・+1パック込み)
 - [PokeAPI](https://github.com/PokeAPI/pokeapi): ポケモン名の日英対応(照合用)
 
@@ -43,11 +47,13 @@ npm run build:cards            # 照合結果のサマリを表示
 npm run build:cards -- --verbose  # 名前の一致度が低い対応も一覧表示
 ```
 
-GameWith に新しいパックが追加された場合は `scripts/build-card-db.mjs` の `GW_PACK_SET` にパックキーと弾コードを追記してください(未登録だと警告が出ます)。
+GitHub Actions(`.github/workflows/update-card-db.yml`)が毎週月曜に同じ処理を実行し、差分があれば PR を作ります。手動実行も可能です。
 
-カード画像は GameWith の画像を直接参照しています(リポジトリには含めていません)。
+取得元に新しいパックが追加された場合は `scripts/build-card-db.mjs` の `PACK_SET` にパックキーと弾コードを追記してください(未登録だと警告が出ます)。
 
-DB未収録の新弾などは、`パック` タブ下部の「手動パック」で従来どおりプール枚数を手入力できます。手動パックの排出率の初期値は GameWith の「通常封入(99.950%)」表を1パックあたり期待枚数に換算したものです(出典: https://gamewith.jp/pokemon-tcg-pocket/466420)。
+カード画像は取得元の画像を直接参照しています(リポジトリには含めていません)。
+
+DB未収録の新弾などは、`パック` タブ下部の「手動パック」で従来どおりプール枚数を手入力できます。手動パックの排出率の初期値は「通常封入(99.950%)」の排出率表を1パックあたり期待枚数に換算したものです。
 
 ## QR / コード取り込み
 

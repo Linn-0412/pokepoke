@@ -1,0 +1,57 @@
+# 毎週カードDBを作り直し、差分があれば PR を作る。
+# 照合結果 (未対応カード・未登録パックの警告) は PR 本文に載せるので、マージ前に確認する。
+name: カードDB更新
+
+on:
+  schedule:
+    - cron: '0 0 * * 1' # 毎週月曜 9:00 (JST)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+
+      - name: カードDBを生成
+        run: |
+          npm run --silent build:cards -- --verbose | tee build-card-db.log
+
+      - name: テスト
+        run: npm test
+
+      - name: PR本文を作成
+        run: |
+          {
+            echo '`npm run build:cards` の定期実行で `public/card-db.json` に差分が出ました。'
+            echo
+            echo '未対応のカードや `PACK_SET` 未登録パックの警告がないか確認してからマージしてください。'
+            echo
+            echo '<details><summary>生成ログ</summary>'
+            echo
+            echo '```'
+            cat build-card-db.log
+            echo '```'
+            echo
+            echo '</details>'
+          } > pr-body.md
+
+      - uses: peter-evans/create-pull-request@v7
+        with:
+          add-paths: public/card-db.json
+          branch: update/card-db
+          delete-branch: true
+          commit-message: カードDBを更新
+          title: カードDBを更新
+          body-path: pr-body.md
+          author: Linn-0412 <Linn-0412@users.noreply.github.com>
+          committer: Linn-0412 <Linn-0412@users.noreply.github.com>

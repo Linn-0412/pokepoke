@@ -134,7 +134,6 @@ export type DbPack = {
 export type CardDbData = {
   version: number
   generatedAt: string
-  sources: string[]
   imageBase: string
   packs: DbPack[]
   cards: DbCard[]
