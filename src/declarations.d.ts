@@ -34,5 +34,6 @@ declare module 'tcgp-deck-qr' {
 
   export function decodeQrPixels(image: ImageData): QrDecodeResult | null
   export function decodePayload(payload: string): DecodedPayload
+  export function encodePayload(payload: Partial<DecodedPayload>): string
   export function loadCardDatabase(options?: { source?: string }): Promise<CardDatabase>
 }

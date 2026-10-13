@@ -2,16 +2,20 @@ import type { State } from './types'
 
 export const STORAGE_KEY = 'packnavi'
 
-export const RARITIES = ['◇', '◇◇', '◇◇◇', '◇◇◇◇', '☆', '☆☆', '☆☆☆', '♛'] as const
+export const RARITIES = ['◇', '◇◇', '◇◇◇', '◇◇◇◇', '☆', '☆☆', '☆☆☆', '♛', '✦', '✦✦'] as const
+
+/** これ以下のレアリティは「対戦用の通常版」として、どの絵柄でもよい扱いにする */
+export const MAX_PLAY_RARITY = 3
 
 export const RATE_SOURCE_URL = 'https://gamewith.jp/pokemon-tcg-pocket/466420'
 
 export const RATE_SOURCE_LABEL = 'GameWith 通常封入(99.950%)'
 
-export const DEFAULT_RATES = [3, 1.5, 0.25, 0.0833, 0.1286, 0.025, 0.0111, 0.002] as const
+// ✦ / ✦✦ は色違い収録パックの値
+export const DEFAULT_RATES = [3, 1.5, 0.25, 0.0833, 0.1286, 0.025, 0.0111, 0.002, 0.0357, 0.0167] as const
 
 export const RATE_NOTICE =
-  'GameWith掲載の通常封入(99.950%)を、1パックあたり期待枚数に換算した初期値です。ハイクラスパックやレア封入は必要に応じて調整してください。'
+  '手動で追加したパック用の排出率です。カードDBに収録済みのパックは、弾ごとの排出率(レアパック・+1パック込み)を自動で使います。'
 
 export const EMPTY_STATE: State = {
   packs: [],

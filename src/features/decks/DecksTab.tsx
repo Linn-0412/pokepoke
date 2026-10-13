@@ -1,18 +1,27 @@
-import { Camera, FileJson, Images, Plus, Trash2 } from 'lucide-react'
+import { Camera, FileJson, Images, Info, Plus, Search, Trash2 } from 'lucide-react'
 import type { Dispatch, SetStateAction } from 'react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import { CardDetail, CardImage } from '../../components/CardImage'
 import { ChipSelector } from '../../components/ChipSelector'
+import {
+  cardFromDb,
+  displayRarity,
+  pullablePrints,
+  representativePrint,
+  searchCards,
+} from '../../data/cardDb'
 import { createDeckFromImported, decodeDeckQrImage, decodeDeckText } from '../../data/deckImport'
 import { createEmptyCard, createEmptyDeck, findKnownCard, normalizeLookup } from '../../data/storage'
 import { RARITY_OPTIONS, RARITIES } from '../../domain/constants'
-import type { Card, Deck, ImportedDeck, State } from '../../domain/types'
+import type { Card, CardDb, DbCard, Deck, ImportedDeck, State } from '../../domain/types'
 
 type DecksTabProps = {
   state: State
   setState: Dispatch<SetStateAction<State>>
+  db: CardDb | null
 }
 
-export function DecksTab({ state, setState }: DecksTabProps) {
+export function DecksTab({ state, setState, db }: DecksTabProps) {
   const [importText, setImportText] = useState('')
   const [importedDeck, setImportedDeck] = useState<ImportedDeck | null>(null)
   const [importMessage, setImportMessage] = useState('')
@@ -46,7 +55,7 @@ export function DecksTab({ state, setState }: DecksTabProps) {
     setIsImporting(true)
     setImportMessage('QR画像を解析しています。')
     try {
-      const decoded = await decodeDeckQrImage(file)
+      const decoded = await decodeDeckQrImage(file, db)
       setImportedDeck(decoded)
       setImportMessage(`${decoded.cards.length}種類のカードを読み取りました。`)
     } catch (error) {
@@ -60,7 +69,7 @@ export function DecksTab({ state, setState }: DecksTabProps) {
     setIsImporting(true)
     setImportMessage('コードを解析しています。')
     try {
-      const decoded = await decodeDeckText(importText)
+      const decoded = await decodeDeckText(importText, db)
       setImportedDeck(decoded)
       setImportMessage(`${decoded.cards.length}種類のカードを読み取りました。`)
     } catch (error) {
@@ -76,7 +85,7 @@ export function DecksTab({ state, setState }: DecksTabProps) {
     }
     setState((current) => ({
       ...current,
-      decks: [...current.decks, createDeckFromImported(importedDeck, current)],
+      decks: [...current.decks, createDeckFromImported(importedDeck, current, db)],
     }))
     setImportedDeck(null)
     setImportText('')
@@ -151,11 +160,17 @@ export function DecksTab({ state, setState }: DecksTabProps) {
               </p>
             ))}
             <div className="compact-card-list">
-              {importedDeck.cards.map((card) => (
-                <span key={`${card.name}-${card.unresolvedNr ?? card.name}`}>
-                  {card.name} x{card.count}
-                </span>
-              ))}
+              {importedDeck.cards.map((card) => {
+                const dbCard = card.cardId ? db?.cardsById.get(card.cardId) : undefined
+                return (
+                  <span className={dbCard ? 'with-thumb' : ''} key={`${card.name}-${card.cardId ?? card.unresolvedNr ?? ''}`}>
+                    {db && dbCard ? (
+                      <CardImage alt={dbCard.name} className="mini-thumb" db={db} printId={representativePrint(dbCard).id} />
+                    ) : null}
+                    {card.name} x{card.count}
+                  </span>
+                )
+              })}
             </div>
           </div>
         ) : null}
@@ -164,11 +179,12 @@ export function DecksTab({ state, setState }: DecksTabProps) {
       {state.decks.length === 0 ? (
         <section className="empty-state">
           <h2>デッキがありません</h2>
-          <p>まずはデッキを追加して、必要なカードと持っている枚数を入れてください。</p>
+          <p>まずはデッキを追加するか、パックタブでほしいカードをタップしてください。</p>
         </section>
       ) : (
         state.decks.map((deck) => (
           <DeckEditor
+            db={db}
             deck={deck}
             key={deck.id}
             state={state}
@@ -184,18 +200,19 @@ export function DecksTab({ state, setState }: DecksTabProps) {
 type DeckEditorProps = {
   deck: Deck
   state: State
+  db: CardDb | null
   updateDeck: (deckId: string, updater: (deck: Deck) => Deck) => void
   deleteDeck: (deckId: string) => void
 }
 
-function DeckEditor({ deck, state, updateDeck, deleteDeck }: DeckEditorProps) {
+function DeckEditor({ deck, state, db, updateDeck, deleteDeck }: DeckEditorProps) {
   const totalNeed = deck.cards.reduce((sum, card) => sum + Math.max(0, card.need), 0)
   const totalOwn = deck.cards.reduce((sum, card) => sum + Math.min(Math.max(0, card.own), Math.max(0, card.need)), 0)
 
-  const addCard = () => {
+  const addCard = (card: Card = createEmptyCard()) => {
     updateDeck(deck.id, (current) => ({
       ...current,
-      cards: [...current.cards, createEmptyCard()],
+      cards: [...current.cards, card],
     }))
   }
 
@@ -253,24 +270,192 @@ function DeckEditor({ deck, state, updateDeck, deleteDeck }: DeckEditorProps) {
       </div>
 
       <div className="card-editor-list">
-        {deck.cards.map((card, index) => (
-          <CardEditor
-            card={card}
-            key={`${deck.id}-${index}`}
-            packs={state.packs}
-            isComplete={card.need > 0 && card.own >= card.need}
-            updateCard={(updater) => updateCard(index, updater)}
-            deleteCard={() => deleteCard(index)}
-            onNameBlur={() => inheritMetadata(index)}
-          />
-        ))}
+        {deck.cards.map((card, index) => {
+          const dbCard = card.cardId ? db?.cardsById.get(card.cardId) : undefined
+          const key = `${deck.id}-${index}`
+          const common = {
+            card,
+            isComplete: card.need > 0 && card.own >= card.need,
+            updateCard: (updater: (card: Card) => Card) => updateCard(index, updater),
+            deleteCard: () => deleteCard(index),
+          }
+          return db && dbCard ? (
+            <DbCardEditor key={key} {...common} db={db} dbCard={dbCard} />
+          ) : (
+            <CardEditor key={key} {...common} packs={state.packs} onNameBlur={() => inheritMetadata(index)} />
+          )
+        })}
       </div>
 
-      <button className="secondary-button" type="button" onClick={addCard}>
+      {db ? <CardSearch db={db} onAdd={(card) => addCard(cardFromDb(card))} /> : null}
+
+      <button className="secondary-button" type="button" onClick={() => addCard()}>
         <Plus size={18} />
-        <span>カード追加</span>
+        <span>手入力でカード追加</span>
       </button>
     </section>
+  )
+}
+
+function CardSearch({ db, onAdd }: { db: CardDb; onAdd: (card: DbCard) => void }) {
+  const [query, setQuery] = useState('')
+  const [detail, setDetail] = useState<DbCard | null>(null)
+  const results = useMemo(() => searchCards(db, query, 30), [db, query])
+
+  return (
+    <div className="card-search">
+      <label className="search-input">
+        <Search size={16} />
+        <input
+          aria-label="カードを検索して追加"
+          placeholder="カード名・ワザ名で検索して追加"
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+      </label>
+      {results.length > 0 ? (
+        <div className="search-results">
+          {results.map((card) => (
+            <div className="search-result" key={card.id}>
+              <button
+                className="search-result-main"
+                type="button"
+                onClick={() => {
+                  onAdd(card)
+                  setQuery('')
+                }}
+              >
+                <CardImage alt={card.name} db={db} printId={representativePrint(card).id} />
+                <span>
+                  <strong>{card.name}</strong>
+                  <span className="muted small">{describeCard(card, db)}</span>
+                </span>
+                <Plus size={18} />
+              </button>
+              <button className="icon-only-button" type="button" title="詳細" onClick={() => setDetail(card)}>
+                <Info size={16} />
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {detail ? <CardDetail card={detail} db={db} onClose={() => setDetail(null)} /> : null}
+    </div>
+  )
+}
+
+/** 同名カードを見分けるための説明: ワザ名と収録パック */
+function describeCard(card: DbCard, db: CardDb): string {
+  const moves = [card.ability ? `特性:${card.ability.n}` : '', ...(card.moves ?? []).map((move) => move.n)]
+    .filter(Boolean)
+    .join(' / ')
+  const packs = [...new Set(pullablePrints(card).flatMap((print) => print.packs))]
+    .map((packId) => db.packsById.get(packId)?.name ?? packId)
+  const packText = packs.length > 0 ? packs.slice(0, 2).join('・') + (packs.length > 2 ? ' 他' : '') : 'プロモ'
+  return [moves, packText].filter(Boolean).join(' | ')
+}
+
+type DbCardEditorProps = {
+  card: Card
+  db: CardDb
+  dbCard: DbCard
+  isComplete: boolean
+  updateCard: (updater: (card: Card) => Card) => void
+  deleteCard: () => void
+}
+
+function DbCardEditor({ card, db, dbCard, isComplete, updateCard, deleteCard }: DbCardEditorProps) {
+  const [detail, setDetail] = useState(false)
+  const prints = pullablePrints(dbCard)
+  const selected = new Set(card.printIds ?? [])
+  const shown = representativePrint(dbCard, card.printIds)
+
+  const setPrintIds = (printIds: string[]) =>
+    updateCard((current) => {
+      const next: Card = { ...current, r: displayRarity(dbCard, printIds) }
+      if (printIds.length > 0) {
+        next.printIds = printIds
+      } else {
+        delete next.printIds
+      }
+      return next
+    })
+
+  return (
+    <article className={`card-editor db-card-editor ${isComplete ? 'complete' : ''}`}>
+      <div className="db-card-main">
+        <button className="thumb-button" type="button" title="詳細" onClick={() => setDetail(true)}>
+          <CardImage alt={dbCard.name} db={db} printId={shown.id} />
+        </button>
+        <div className="db-card-fields">
+          <strong>{dbCard.name}</strong>
+          <span className="muted small">{describeCard(dbCard, db)}</span>
+          <div className="number-row">
+            <label>
+              <span>所持</span>
+              <input
+                min={0}
+                type="number"
+                value={card.own}
+                onChange={(event) => updateCard((current) => ({ ...current, own: toNumber(event.target.value) }))}
+              />
+            </label>
+            <label>
+              <span>必要</span>
+              <input
+                min={0}
+                type="number"
+                value={card.need}
+                onChange={(event) => updateCard((current) => ({ ...current, need: toNumber(event.target.value) }))}
+              />
+            </label>
+          </div>
+        </div>
+      </div>
+      {prints.length > 1 ? (
+        <div>
+          <span className="field-label">欲しい絵柄</span>
+          <div className="chip-list" aria-label="欲しい絵柄">
+            <button
+              className={`chip ${selected.size === 0 ? 'active' : ''}`}
+              type="button"
+              onClick={() => setPrintIds([])}
+            >
+              どれでもOK
+            </button>
+            {prints.map((print) => (
+              <button
+                className={`chip ${selected.has(print.id) ? 'active' : ''}`}
+                key={print.id}
+                type="button"
+                title={print.packs.map((packId) => db.packsById.get(packId)?.name ?? packId).join(' / ')}
+                onClick={() =>
+                  setPrintIds(
+                    selected.has(print.id)
+                      ? [...selected].filter((id) => id !== print.id)
+                      : [...selected, print.id],
+                  )
+                }
+              >
+                {RARITIES[print.r ?? 0]}
+                <span className="chip-sub">{db.packsById.get(print.packs[0])?.name ?? ''}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      <div className="card-footer">
+        <span className="muted small">
+          {RARITIES[displayRarity(dbCard, card.printIds)]} / {Math.max(0, card.need - card.own)}枚不足
+        </span>
+        <button className="icon-button danger" type="button" onClick={deleteCard}>
+          <Trash2 size={16} />
+          <span>削除</span>
+        </button>
+      </div>
+      {detail ? <CardDetail card={dbCard} db={db} printId={shown.id} onClose={() => setDetail(false)} /> : null}
+    </article>
   )
 }
 
@@ -331,7 +516,7 @@ function CardEditor({ card, packs, isComplete, updateCard, deleteCard, onNameBlu
         </div>
       </div>
       <div>
-        <span className="field-label">収録パック</span>
+        <span className="field-label">収録パック (手動パック)</span>
         <ChipSelector packs={packs} selected={card.packs} onChange={(packIds) => updateCard((current) => ({ ...current, packs: packIds }))} />
       </div>
       <div className="card-footer">

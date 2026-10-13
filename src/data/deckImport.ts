@@ -1,11 +1,13 @@
 import { decodePayload, decodeQrPixels, loadCardDatabase } from 'tcgp-deck-qr'
 import { RARITIES } from '../domain/constants'
-import type { Card, Deck, ImportedDeck, ImportedDeckCard, State } from '../domain/types'
-import { createId, findKnownCard, normalizeLookup } from './storage'
+import type { Card, CardDb, Deck, ImportedDeck, ImportedDeckCard, State } from '../domain/types'
+import { cardFromDb, displayRarity, findUniqueCardByName } from './cardDb'
+import { createId, findKnownCard, findKnownCardById, normalizeLookup } from './storage'
 
 type DecodedCardInfo = {
   key: string
   name: string
+  cardId?: string
   r?: number
   sourcePackNames: string[]
   unresolvedNr?: number
@@ -14,16 +16,16 @@ type DecodedCardInfo = {
 
 type CardDatabaseLike = Awaited<ReturnType<typeof loadCardDatabase>>
 
-export async function decodeDeckQrImage(file: File): Promise<ImportedDeck> {
+export async function decodeDeckQrImage(file: File, db: CardDb | null): Promise<ImportedDeck> {
   const image = await fileToImageData(file)
   const decoded = decodeQrPixels(image)
   if (!decoded) {
     throw new Error('QRコードを読み取れませんでした。画像をトリミングするか、コード文字列を貼り付けてください。')
   }
-  return decodeDeckText(decoded.payload, `QR画像 (${decoded.method})`)
+  return decodeDeckText(decoded.payload, db, `QR画像 (${decoded.method})`)
 }
 
-export async function decodeDeckText(text: string, source = '貼り付け'): Promise<ImportedDeck> {
+export async function decodeDeckText(text: string, db: CardDb | null, source = '貼り付け'): Promise<ImportedDeck> {
   const trimmed = text.trim()
   if (!trimmed) {
     throw new Error('コードまたはデッキリストを入力してください。')
@@ -38,7 +40,7 @@ export async function decodeDeckText(text: string, source = '貼り付け'): Pro
   const warnings: string[] = []
   for (const candidate of candidates) {
     try {
-      return await decodePayloadCandidate(candidate, source, warnings)
+      return await decodePayloadCandidate(candidate, source, warnings, db)
     } catch (error) {
       warnings.push(error instanceof Error ? error.message : String(error))
     }
@@ -52,8 +54,13 @@ export async function decodeDeckText(text: string, source = '貼り付け'): Pro
   throw new Error('対応できるQRコード/デッキリストとして解析できませんでした。')
 }
 
-export function createDeckFromImported(imported: ImportedDeck, state: State): Deck {
+export function createDeckFromImported(imported: ImportedDeck, state: State, db: CardDb | null): Deck {
   const cards = imported.cards.map((card): Card => {
+    const dbCard = db ? (card.cardId ? db.cardsById.get(card.cardId) : findUniqueCardByName(db, card.name)) : undefined
+    if (dbCard) {
+      const known = findKnownCardById(dbCard.id, state.decks)
+      return cardFromDb(dbCard, { need: Math.max(1, card.count), own: known?.own ?? 0 })
+    }
     const known = findKnownCard(card.name, state.decks)
     const matchedPacks = matchPackNames(card.sourcePackNames ?? [], state)
     return {
@@ -76,12 +83,21 @@ async function decodePayloadCandidate(
   candidate: string,
   source: string,
   warnings: string[],
+  db: CardDb | null,
 ): Promise<ImportedDeck> {
   const payload = decodePayload(candidate)
-  const database = await loadDatabaseSafely(warnings)
+  // 同梱のカードDBで引けないIDがあるときだけ、外部の英語DBにフォールバックする
+  const allIds = [
+    ...payload.pokemonIds.map((id) => `pokemon:${id}`),
+    ...payload.trainerIds.map((id) => `trainer:${id}`),
+  ]
+  const needsFallback = !db || allIds.some((key) => !db.qr[key])
+  const database = needsFallback ? await loadDatabaseSafely(warnings) : null
+  const describe = (id: number, type: 'pokemon' | 'trainer') =>
+    describeFromCardDb(id, type, db) ?? describeCard(id, type, database)
   const decodedCards = [
-    ...payload.pokemonIds.map((id) => describeCard(id, 'pokemon', database)),
-    ...payload.trainerIds.map((id) => describeCard(id, 'trainer', database)),
+    ...payload.pokemonIds.map((id) => describe(id, 'pokemon')),
+    ...payload.trainerIds.map((id) => describe(id, 'trainer')),
   ]
 
   const byKey = new Map<string, ImportedDeckCard>()
@@ -93,6 +109,7 @@ async function decodePayloadCandidate(
     }
     byKey.set(card.key, {
       name: card.name,
+      cardId: card.cardId,
       count: 1,
       r: card.r,
       sourcePackNames: card.sourcePackNames,
@@ -120,6 +137,25 @@ async function loadDatabaseSafely(warnings: string[]): Promise<CardDatabaseLike 
   } catch {
     warnings.push('カード名DBを取得できなかったため、QR内のID名で取り込みます。')
     return null
+  }
+}
+
+function describeFromCardDb(
+  entityId: number,
+  entityType: 'pokemon' | 'trainer',
+  db: CardDb | null,
+): DecodedCardInfo | null {
+  const key = `${entityType}:${entityId}`
+  const card = db?.cardsById.get(db.qr[key] ?? '')
+  if (!card) {
+    return null
+  }
+  return {
+    key,
+    name: card.name,
+    cardId: card.id,
+    r: displayRarity(card),
+    sourcePackNames: [],
   }
 }
 
