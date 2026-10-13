@@ -2,6 +2,7 @@ import { Boxes, Layers, ListChecks } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { ExportImport } from './components/ExportImport'
 import { NoticeBar } from './components/NoticeBar'
+import { linkCardsToDb, loadCardDb, useCardDb } from './data/cardDb'
 import { notifyRecommendation } from './data/notifications'
 import { loadState, saveState } from './data/storage'
 import { calculatePackRankings } from './domain/calculator'
@@ -22,11 +23,23 @@ function App() {
   const [state, setState] = useState<State>(() => loadState())
   const [activeTab, setActiveTab] = useState<Tab>('recommend')
   const [notificationStatus, setNotificationStatus] = useState('')
-  const result = useMemo(() => calculatePackRankings(state), [state])
+  const { db, error: dbError } = useCardDb()
+  const result = useMemo(() => calculatePackRankings(state, db), [state, db])
 
   useEffect(() => {
     saveState(state)
   }, [state])
+
+  // 名前だけで登録済みのカード (以前のQR取り込みなど) をカードDBに紐付ける
+  useEffect(() => {
+    loadCardDb()
+      .then((loaded) => setState((current) => linkCardsToDb(current, loaded)))
+      .catch(() => {
+        // 読み込み失敗は useCardDb 側で表示する
+      })
+  }, [])
+
+  const handleImport = (imported: State) => setState(db ? linkCardsToDb(imported, db) : imported)
 
   const handleNotify = async () => {
     setNotificationStatus(await notifyRecommendation(result))
@@ -39,7 +52,7 @@ function App() {
           <p className="eyebrow">Pokemon TCG Pocket</p>
           <h1>おすすめパック計算ツール</h1>
         </div>
-        <ExportImport state={state} onImport={setState} />
+        <ExportImport state={state} onImport={handleImport} />
       </header>
 
       <NoticeBar result={result} notificationStatus={notificationStatus} onNotify={handleNotify} />
@@ -62,9 +75,9 @@ function App() {
       </nav>
 
       <main>
-        {activeTab === 'recommend' ? <RecommendTab state={state} result={result} /> : null}
-        {activeTab === 'decks' ? <DecksTab state={state} setState={setState} /> : null}
-        {activeTab === 'packs' ? <PacksTab state={state} setState={setState} /> : null}
+        {activeTab === 'recommend' ? <RecommendTab state={state} result={result} db={db} /> : null}
+        {activeTab === 'decks' ? <DecksTab state={state} setState={setState} db={db} /> : null}
+        {activeTab === 'packs' ? <PacksTab state={state} setState={setState} db={db} dbError={dbError} /> : null}
       </main>
     </div>
   )

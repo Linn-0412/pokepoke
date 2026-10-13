@@ -83,6 +83,16 @@ export function normalizeState(value: unknown): State {
   }
 }
 
+export function findKnownCardById(cardId: string, decks: Deck[]): Card | null {
+  for (const deck of decks) {
+    const found = deck.cards.find((card) => card.cardId === cardId)
+    if (found) {
+      return found
+    }
+  }
+  return null
+}
+
 export function findKnownCard(name: string, decks: Deck[]): Card | null {
   const normalizedName = normalizeLookup(name)
   if (!normalizedName) {
@@ -118,7 +128,11 @@ function cloneState(state: State): State {
     packs: state.packs.map((pack) => ({ ...pack, n: { ...pack.n } })),
     decks: state.decks.map((deck) => ({
       ...deck,
-      cards: deck.cards.map((card) => ({ ...card, packs: [...card.packs] })),
+      cards: deck.cards.map((card) => ({
+        ...card,
+        packs: [...card.packs],
+        ...(card.printIds ? { printIds: [...card.printIds] } : {}),
+      })),
     })),
     rates: [...state.rates],
   }
@@ -135,15 +149,25 @@ function normalizeDeck(value: unknown): Deck {
 
 function normalizeCard(value: unknown): Card {
   const card = value as Partial<Card>
-  return {
+  const normalized: Card = {
     name: typeof card.name === 'string' ? card.name.trim() : '',
     r: normalizeRarity(card.r),
     need: normalizeInteger(card.need, 0),
     own: normalizeInteger(card.own, 0),
-    packs: Array.isArray(card.packs)
-      ? [...new Set(card.packs.filter((packId): packId is string => typeof packId === 'string'))]
-      : [],
+    packs: normalizeStringList(card.packs),
   }
+  if (typeof card.cardId === 'string' && card.cardId) {
+    normalized.cardId = card.cardId
+    const printIds = normalizeStringList(card.printIds)
+    if (printIds.length > 0) {
+      normalized.printIds = printIds
+    }
+  }
+  return normalized
+}
+
+function normalizeStringList(value: unknown): string[] {
+  return Array.isArray(value) ? [...new Set(value.filter((item): item is string => typeof item === 'string'))] : []
 }
 
 function normalizePack(value: unknown): Pack {

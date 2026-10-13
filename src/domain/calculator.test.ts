@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { calculatePackRankings } from './calculator'
+import { indexCardDb } from '../data/cardDb'
+import { aggregateCards, calculatePackRankings } from './calculator'
 import type { State } from './types'
 
 const baseState: State = {
@@ -114,5 +115,105 @@ describe('calculatePackRankings', () => {
 
     expect(result.warnings.some((warning) => warning.message.includes('収録パック'))).toBe(true)
     expect(result.warnings.some((warning) => warning.message.includes('レアリティ'))).toBe(true)
+  })
+})
+
+describe('calculatePackRankings with card DB', () => {
+  const db = indexCardDb({
+    version: 1,
+    generatedAt: '',
+    sources: [],
+    imageBase: '',
+    packs: [
+      { id: 'db-a', name: 'DB-A', set: 'X1', rates: [3, 1.5, 0.25, 0.08, 0.13, 0.025, 0.011, 0.002, 0, 0], pool: [50, 30, 10, 5, 8, 10, 1, 2, 0, 0] },
+      { id: 'db-b', name: 'DB-B', set: 'X2', rates: null, pool: [40, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
+    ],
+    cards: [
+      {
+        id: '100',
+        name: 'ピカチュウex',
+        kind: 'P',
+        type: '雷',
+        prints: [
+          { id: '100', r: 3, packs: ['db-a'] },
+          { id: '101', r: 5, packs: ['db-a'] },
+          { id: '102', r: 7, packs: ['db-a'] },
+          { id: '103', r: null, packs: [], promo: true },
+        ],
+      },
+      { id: '200', name: 'ピカチュウ', kind: 'P', type: '雷', prints: [{ id: '200', r: 0, packs: ['db-a', 'db-b'] }] },
+      { id: '300', name: 'プロモ限定', kind: 'T', type: 'グ', prints: [{ id: '300', r: null, packs: [], promo: true }] },
+    ],
+    qr: {},
+  })
+
+  const withDeck = (cards: State['decks'][number]['cards']): State => ({
+    ...baseState,
+    packs: [],
+    decks: [{ id: 'deck-1', name: 'デッキ1', cards }],
+  })
+
+  it('どの絵柄でもよいカードは、パック内の全絵柄の確率を合計する', () => {
+    const result = calculatePackRankings(
+      withDeck([{ name: 'ピカチュウex', r: 3, need: 2, own: 0, packs: [], cardId: '100' }]),
+      db,
+    )
+
+    expect(result.rankings).toHaveLength(1)
+    expect(result.rankings[0].packId).toBe('db-a')
+    expect(result.rankings[0].score).toBeCloseTo(0.08 / 5 + 0.025 / 10 + 0.002 / 2)
+    expect(result.rankings[0].contributions[0].printId).toBe('100')
+  })
+
+  it('絵柄を指定したカードはその絵柄だけで計算する', () => {
+    const result = calculatePackRankings(
+      withDeck([{ name: 'ピカチュウex', r: 7, need: 1, own: 0, packs: [], cardId: '100', printIds: ['102'] }]),
+      db,
+    )
+
+    expect(result.rankings[0].score).toBeCloseTo(0.002 / 2)
+    expect(result.missingCards[0].r).toBe(7)
+  })
+
+  it('DBパックの排出率が無ければユーザー設定の排出率を使い、最も出やすいパックを記録する', () => {
+    const result = calculatePackRankings(
+      withDeck([{ name: 'ピカチュウ', r: 0, need: 2, own: 0, packs: [], cardId: '200' }]),
+      db,
+    )
+
+    const key = result.missingCards[0].key
+    expect(result.rankings.map((ranking) => ranking.packId)).toEqual(['db-b', 'db-a'])
+    expect(result.rankings[0].score).toBeCloseTo(3 / 40)
+    expect(result.rankings[1].score).toBeCloseTo(3 / 50)
+    expect(result.bestSources[key]).toMatchObject({ packId: 'db-b', printId: '200' })
+  })
+
+  it('パックから引けないカードは警告し、収録パック未設定の警告は出さない', () => {
+    const result = calculatePackRankings(
+      withDeck([{ name: 'プロモ限定', r: 0, need: 1, own: 0, packs: [], cardId: '300' }]),
+      db,
+    )
+
+    expect(result.best).toBeNull()
+    expect(result.warnings.map((warning) => warning.message)).toEqual([
+      'プロモ限定: パックから引けない絵柄(プロモ等)のため計算対象外です。',
+    ])
+  })
+
+  it('同じカードでも「どれでも」と「絵柄指定」は別々に集計する', () => {
+    const cards = aggregateCards(
+      [
+        {
+          id: 'deck-1',
+          name: 'デッキ1',
+          cards: [
+            { name: 'ピカチュウex', r: 3, need: 2, own: 0, packs: [], cardId: '100' },
+            { name: 'ピカチュウex', r: 7, need: 1, own: 0, packs: [], cardId: '100', printIds: ['102'] },
+          ],
+        },
+      ],
+      db,
+    )
+    expect(cards).toHaveLength(2)
   })
 })
