@@ -122,7 +122,6 @@ describe('calculatePackRankings with card DB', () => {
   const db = indexCardDb({
     version: 1,
     generatedAt: '',
-    sources: [],
     imageBase: '',
     packs: [
       { id: 'db-a', name: 'DB-A', set: 'X1', rates: [3, 1.5, 0.25, 0.08, 0.13, 0.025, 0.011, 0.002, 0, 0], pool: [50, 30, 10, 5, 8, 10, 1, 2, 0, 0] },

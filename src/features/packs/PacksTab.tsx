@@ -271,7 +271,7 @@ function CustomPacks({ state, setState }: CustomPacksProps) {
             onClick={() => setState((current) => ({ ...current, rates: [...DEFAULT_RATES] }))}
           >
             <RotateCcw size={18} />
-            <span>GameWith通常封入に戻す</span>
+            <span>通常封入の初期値に戻す</span>
           </button>
         </details>
       </section>

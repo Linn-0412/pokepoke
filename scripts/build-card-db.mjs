@@ -1,30 +1,30 @@
 // カードDB生成スクリプト
 //
-// GameWith のカード一覧ページに埋め込まれたデータ (日本語名・ワザ・収録パック・画像ID) と、
+// カード一覧サイトのページに埋め込まれたデータ (日本語名・ワザ・収録パック・画像ID) と、
 // tcgp-deck-qr が使う英語カードDB (QR内のカードIDを持つ) を突き合わせて public/card-db.json を作る。
 //
 //   npm run build:cards
 //
-// GameWith 側のデータはJSの式なので eval せず、リテラルだけを読む簡易パーサで解析する。
+// サイト側のデータはJSの式なので eval せず、リテラルだけを読む簡易パーサで解析する。
 
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const GAMEWITH_LIST_URL = 'https://gamewith.jp/pokemon-tcg-pocket/462535'
+const CARD_LIST_URL = 'https://gamewith.jp/pokemon-tcg-pocket/462535'
 const FLIB_BASE = 'https://raw.githubusercontent.com/flibustier/pokemon-tcg-pocket-database/main/dist'
 // ポケモン名の日本語 -> 英語辞書 (照合の精度を上げるために使う)
 const SPECIES_NAMES_URL = 'https://raw.githubusercontent.com/PokeAPI/pokeapi/master/data/v2/csv/pokemon_species_names.csv'
 const OUTPUT =resolve(dirname(fileURLToPath(import.meta.url)), '../public/card-db.json')
 
 // アプリ側の RARITIES と同じ並び: ◇ ◇◇ ◇◇◇ ◇◇◇◇ ☆ ☆☆ ☆☆☆ ♛ ✦ ✦✦
-const GW_RARITY = { d1: 0, d2: 1, d3: 2, d4: 3, s1: 4, s2: 5, s3: 6, ur: 7, a1: 8, a2: 9 }
+const SITE_RARITY = { d1: 0, d2: 1, d3: 2, d4: 3, s1: 4, s2: 5, s3: 6, ur: 7, a1: 8, a2: 9 }
 const FLIB_RARITY = { C: 0, U: 1, R: 2, RR: 3, AR: 4, SR: 5, SAR: 5, IM: 6, UR: 7, S: 8, SSR: 9, CF: 0, UF: 1, RF: 2 }
 const RARITY_COUNT = 10
 const VERBOSE = process.argv.includes('--verbose')
 
-// GameWith のパックキー -> 弾コード。新弾が出たらここに追記する。
-const GW_PACK_SET = {
+// サイトのパックキー -> 弾コード。新弾が出たらここに追記する。
+const PACK_SET = {
   1: 'A1', 2: 'A1', 3: 'A1', 4: 'A1', 14: 'A1',
   8: 'A1a',
   10: 'A2', 11: 'A2', 12: 'A2', 15: 'A2',
@@ -50,53 +50,61 @@ const GW_PACK_SET = {
 }
 const PROMO_ROOTS = { 5: 'PROMO-A', 44: 'PROMO-B' }
 
-const GW_ELEMENT = {
+const SITE_ELEMENT = {
   草: 'grass', 炎: 'fire', 水: 'water', 雷: 'lightning', 超: 'psychic',
   闘: 'fighting', 悪: 'darkness', 鋼: 'metal', 龍: 'dragon', 無: 'colorless',
 }
 
 async function main() {
   const [html, flibCards, flibExtra, pullRates, speciesCsv] = await Promise.all([
-    fetchText(GAMEWITH_LIST_URL),
+    fetchText(CARD_LIST_URL),
     fetchJson(`${FLIB_BASE}/cards.json`),
     fetchJson(`${FLIB_BASE}/cards.extra.json`),
     fetchJson(`${FLIB_BASE}/pullRates.json`),
     fetchText(SPECIES_NAMES_URL),
   ])
 
-  const gw = parseGameWith(html)
-  const packs = buildPackCatalog(gw.packDatas)
-  const gwCards = buildGwCards(gw.pokemonDatas, packs)
-  attachSpeciesNames(gwCards, parseSpeciesNames(speciesCsv))
+  const site = parseCardListPage(html)
+  const packs = buildPackCatalog(site.packDatas)
+  const siteCards = buildSiteCards(site.pokemonDatas, packs)
+  attachSpeciesNames(siteCards, parseSpeciesNames(speciesCsv))
   const entities = buildEntities(flibCards, flibExtra)
-  const { links, unmatchedEntities, weak } = matchEntities(entities, gwCards)
+  const { links, unmatchedEntities, weak } = matchEntities(entities, siteCards)
 
   const qr = {}
-  for (const [entityKey, gwCard] of links) {
-    qr[entityKey] = gwCard.id
-    gwCard.en = entities.get(entityKey).name
+  for (const [entityKey, siteCard] of links) {
+    qr[entityKey] = siteCard.id
+    siteCard.en = entities.get(entityKey).name
   }
 
   for (const pack of packs.pullable) {
     pack.rates = setRates(pullRates[pack.set])
   }
-  computePools(packs.pullable, gwCards)
+  computePools(packs.pullable, siteCards)
 
   const output = {
     version: 1,
     generatedAt: new Date().toISOString(),
-    sources: [GAMEWITH_LIST_URL, `${FLIB_BASE}/cards.json`, `${FLIB_BASE}/pullRates.json`],
     imageBase: 'https://img.gamewith.jp/article_tools/pokemon-tcg-pocket/gacha/',
     packs: packs.pullable.map(({ id, name, set, rates, pool }) => ({ id, name, set, rates, pool })),
-    cards: gwCards.map(serializeCard),
+    cards: siteCards.map(serializeCard),
     qr,
+  }
+
+  // 中身が前回と同じなら生成日時も据え置き、差分を出さない (定期実行で空のPRを作らないため)
+  const previous = await readFile(OUTPUT, 'utf8').then(JSON.parse).catch(() => null)
+  const unchanged = previous && JSON.stringify({ ...previous, generatedAt: '' }) === JSON.stringify({ ...output, generatedAt: '' })
+  if (unchanged) {
+    output.generatedAt = previous.generatedAt
   }
 
   await mkdir(dirname(OUTPUT), { recursive: true })
   await writeFile(OUTPUT, JSON.stringify(output))
 
+  console.log(unchanged ? 'card-db.json: 変更なし' : 'card-db.json: 更新あり')
+
   console.log(`packs: ${output.packs.length}`)
-  console.log(`cards: ${output.cards.length} (prints: ${gwCards.reduce((sum, card) => sum + card.prints.length, 0)})`)
+  console.log(`cards: ${output.cards.length} (prints: ${siteCards.reduce((sum, card) => sum + card.prints.length, 0)})`)
   console.log(`QR entities linked: ${links.size} / ${entities.size}`)
   if (unmatchedEntities.length > 0) {
     console.log(`unmatched QR entities (${unmatchedEntities.length}):`)
@@ -108,19 +116,19 @@ async function main() {
   if (VERBOSE) for (const line of weak) console.log(`  ${line}`)
   const unknownPackKeys = [...packs.unknown]
   if (unknownPackKeys.length > 0) {
-    console.log(`WARNING: GW_PACK_SET に未登録のパック: ${unknownPackKeys.join(', ')}`)
+    console.log(`WARNING: PACK_SET に未登録のパック: ${unknownPackKeys.join(', ')}`)
   }
 }
 
-// ---------------------------------------------------------------- GameWith
+// ------------------------------------------------------- カード一覧サイト
 
-function parseGameWith(html) {
+function parseCardListPage(html) {
   const result = {}
   for (const name of ['packDatas', 'pokemonDatas']) {
     const marker = `window.wmt.${name}=`
     const index = html.indexOf(marker)
     if (index < 0) {
-      throw new Error(`GameWith のページから ${name} が見つかりません。ページ構成が変わった可能性があります。`)
+      throw new Error(`カード一覧ページから ${name} が見つかりません。ページ構成が変わった可能性があります。`)
     }
     result[name] = new LiteralParser(html, index + marker.length).parseValue()
   }
@@ -229,7 +237,7 @@ class LiteralParser {
   }
 }
 
-// GameWith のパック階層を「実際に引けるパック」に展開する。
+// サイトのパック階層を「実際に引けるパック」に展開する。
 // 例: 最強の遺伝子(親) = ピカチュウ / ミュウツー / リザードン / 共通。共通カードは3パックすべてに入る。
 function buildPackCatalog(packDatas) {
   const byKey = new Map(packDatas.map((pack) => [String(pack.k), pack]))
@@ -253,11 +261,11 @@ function buildPackCatalog(packDatas) {
   for (const pack of packDatas) {
     const key = String(pack.k)
     if (promoSet(key) || pack.children?.length || isCommon(pack)) continue
-    const set = GW_PACK_SET[key]
+    const set = PACK_SET[key]
     if (!set) unknown.add(`${key}:${pack.n}`)
     const parent = byKey.get(parentOf.get(key) ?? '')
     pullable.push({
-      id: `gw${key}`,
+      id: `p${key}`,
       key,
       // 「空と海の導きホウオウ」→「空と海の導き ホウオウ」
       name: parent && pack.n.startsWith(parent.n) ? `${parent.n} ${pack.n.slice(parent.n.length)}` : pack.n,
@@ -266,33 +274,33 @@ function buildPackCatalog(packDatas) {
   }
 
   const pullableKeys = new Set(pullable.map((pack) => pack.key))
-  // GameWith のパックキー1つを、引けるパックIDの一覧に展開する
+  // サイトのパックキー1つを、引けるパックIDの一覧に展開する
   const expand = (key) => {
     key = String(key)
     const pack = byKey.get(key)
     if (!pack) return []
-    if (pullableKeys.has(key)) return [`gw${key}`]
+    if (pullableKeys.has(key)) return [`p${key}`]
     if (pack.children?.length) return pack.children.flatMap(expand)
     const parent = parentOf.get(key)
     if (isCommon(pack) && parent) {
-      return byKey.get(parent).children.filter((child) => pullableKeys.has(String(child))).map((child) => `gw${child}`)
+      return byKey.get(parent).children.filter((child) => pullableKeys.has(String(child))).map((child) => `p${child}`)
     }
     return []
   }
 
-  const setOf = (key) => GW_PACK_SET[key] ?? promoSet(String(key))
+  const setOf = (key) => PACK_SET[key] ?? promoSet(String(key))
 
   return { pullable, unknown, expand, setOf }
 }
 
-function buildGwCards(pokemonDatas, packs) {
+function buildSiteCards(pokemonDatas, packs) {
   return pokemonDatas.map((raw) => {
     const printsRaw = [{ id: raw.id, r: raw.r, p: raw.p }, ...(raw.ver ?? [])]
     const prints = printsRaw.map((print) => {
       const keys = String(print.p ?? '').split(',').map((key) => key.trim()).filter(Boolean)
       return {
         id: String(print.id),
-        r: print.r === 'pr' ? null : (GW_RARITY[print.r] ?? null),
+        r: print.r === 'pr' ? null : (SITE_RARITY[print.r] ?? null),
         packs: [...new Set(keys.flatMap(packs.expand))],
         sets: [...new Set(keys.map(packs.setOf).filter(Boolean))],
         promo: print.r === 'pr' || keys.every((key) => packs.setOf(key)?.startsWith('PROMO')),
@@ -303,7 +311,7 @@ function buildGwCards(pokemonDatas, packs) {
       name: raw.n,
       kind: raw.c,
       type: raw.t,
-      element: GW_ELEMENT[raw.t] ?? null,
+      element: SITE_ELEMENT[raw.t] ?? null,
       hp: raw.hp ? Number(raw.hp) : undefined,
       stage: (raw.o ?? []).find((value) => value !== 'ex'),
       ex: (raw.o ?? []).includes('ex'),
@@ -370,8 +378,8 @@ function buildEntities(flibCards, flibExtra) {
   return entities
 }
 
-// 初出の弾 (通常弾を優先) と弾内の並び順。GameWith のIDは弾内でほぼカード番号順に振られている。
-const SET_ORDER = [...new Set(Object.values(GW_PACK_SET))]
+// 初出の弾 (通常弾を優先) と弾内の並び順。サイトのIDは弾内でほぼカード番号順に振られている。
+const SET_ORDER = [...new Set(Object.values(PACK_SET))]
 
 function setRank(set) {
   const index = SET_ORDER.indexOf(set)
@@ -403,10 +411,10 @@ function orderScore(entity, card) {
   return Math.max(0, 1 - Math.abs(entity.position - card.position) * 10)
 }
 
-// QRのカードID (エンティティ) と GameWith のカードを1対1で対応付ける。
+// QRのカードID (エンティティ) とサイトのカードを1対1で対応付ける。
 // 収録弾×レアリティの重なりを主に、タイプと名前の類似度で補強した貪欲マッチング。
-function matchEntities(entities, gwCards) {
-  for (const card of gwCards) {
+function matchEntities(entities, siteCards) {
+  for (const card of siteCards) {
     for (const print of card.prints) {
       for (const set of print.sets) {
         const origin = { set, order: Number(card.id) }
@@ -414,10 +422,10 @@ function matchEntities(entities, gwCards) {
       }
     }
   }
-  assignOrderPositions(gwCards)
+  assignOrderPositions(siteCards)
 
-  const gwPrintKeys = new Map(
-    gwCards.map((card) => [
+  const sitePrintKeys = new Map(
+    siteCards.map((card) => [
       card,
       card.prints.flatMap((print) =>
         print.sets.map((set) => `${set}|${set.startsWith('PROMO') || print.r == null ? 'P' : print.r}`),
@@ -426,7 +434,7 @@ function matchEntities(entities, gwCards) {
   )
 
   const bySetKey = new Map()
-  for (const [card, keys] of gwPrintKeys) {
+  for (const [card, keys] of sitePrintKeys) {
     for (const key of keys) {
       const list = bySetKey.get(key) ?? []
       list.push(card)
@@ -441,7 +449,7 @@ function matchEntities(entities, gwCards) {
       for (const card of bySetKey.get(key) ?? []) {
         if (seen.has(card) || card.kind !== entity.kind) continue
         seen.add(card)
-        const overlap = multisetOverlap(entity.prints, gwPrintKeys.get(card))
+        const overlap = multisetOverlap(entity.prints, sitePrintKeys.get(card))
         const nameScore = card.speciesEn
           ? Number(normalizeEnglish(entity.name).includes(card.speciesEn))
           : similarity(entity.romaji, card.romaji)
@@ -555,9 +563,9 @@ function setRates(setRates) {
   return rates.map((rate) => Number(rate.toFixed(5)))
 }
 
-function computePools(pullable, gwCards) {
+function computePools(pullable, siteCards) {
   const pools = new Map(pullable.map((pack) => [pack.id, new Array(RARITY_COUNT).fill(0)]))
-  for (const card of gwCards) {
+  for (const card of siteCards) {
     for (const print of card.prints) {
       if (print.r == null) continue
       for (const packId of print.packs) pools.get(packId)[print.r] += 1
@@ -584,8 +592,8 @@ function parseSpeciesNames(csv) {
 }
 
 // 「メガリザードンXex」「ロケット団のスリーパー」などから、含まれる種族名を最長一致で探す
-function attachSpeciesNames(gwCards, species) {
-  for (const card of gwCards) {
+function attachSpeciesNames(siteCards, species) {
+  for (const card of siteCards) {
     if (card.kind !== 'P') continue
     const katakana = card.name.replace(/[ぁ-ゖ]/g, (char) => String.fromCharCode(char.charCodeAt(0) + 0x60))
     const hit = species.find((entry) => katakana.includes(entry.ja))
