@@ -7,10 +7,6 @@ export const RARITIES = ['◇', '◇◇', '◇◇◇', '◇◇◇◇', '☆', '�
 /** これ以下のレアリティは「対戦用の通常版」として、どの絵柄でもよい扱いにする */
 export const MAX_PLAY_RARITY = 3
 
-export const RATE_SOURCE_URL = 'https://gamewith.jp/pokemon-tcg-pocket/466420'
-
-export const RATE_SOURCE_LABEL = '通常封入(99.950%)の排出率表'
-
 // ✦ / ✦✦ は色違い収録パックの値
 export const DEFAULT_RATES = [3, 1.5, 0.25, 0.0833, 0.1286, 0.025, 0.0111, 0.002, 0.0357, 0.0167] as const
 

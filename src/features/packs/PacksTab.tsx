@@ -8,8 +8,6 @@ import {
   DEFAULT_RATES,
   RARITIES,
   RATE_NOTICE,
-  RATE_SOURCE_LABEL,
-  RATE_SOURCE_URL,
 } from '../../domain/constants'
 import type { CardDb, DbCard, DbPrint, Pack, State } from '../../domain/types'
 
@@ -246,9 +244,6 @@ function CustomPacks({ state, setState }: CustomPacksProps) {
 
       <section className="rate-section">
         <p>{RATE_NOTICE}</p>
-        <a className="rate-source" href={RATE_SOURCE_URL} target="_blank" rel="noreferrer">
-          出典: {RATE_SOURCE_LABEL}
-        </a>
         <details>
           <summary>排出率を調整</summary>
           <div className="rate-grid">
